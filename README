@@ -1,0 +1,295 @@
+This is my version of radiuslib, converted for use as a rails plugin/gem.
+The source was originally found here: http://raa.ruby-lang.org/project/radiuslib/
+
+I use this library as a basic RADIUS client plugin for my rails application.
+Some bug fixes have been made. The features have not been changed from the
+original author's intention. I am unaware if all advertised features work, as
+the original project apparently died before progressing past beta, and the
+author does not seem to be around or maintain it anymore. My hope is that
+someone else will benefit from my experience with this library.
+
+The original README is below:
+
+
+RADIUSlib for Ruby
+
+Aug 5, 2002
+
+Dan Debertin <airboss@nodewarrior.org>
+
+---------------------------
+
+Introduction
+
+---------------------------
+
+This is the README for RADIUSlib version 0.5. This will (hopefully) be
+the only "zero-dot" release of RADIUSlib; i'm going to let this
+incubate for a few months and then release a 1.0 in November or
+October of 2002.
+
+RADIUSlib is a full-featured RADIUS protocol and utility library for
+the Ruby programming language. It includes the following components:
+
+o   A complete, RFC-compliant implementation of the protocol,
+appropriate for use as a client or server. Both authentication
+(RFC2865) and accounting (RFC2866) are supported.
+
+o   A higher-level RADIUS request handler that encapsulates the tasks
+to process a single RADIUS authentication or accounting
+transaction.
+
+o   A dictionary parser supporting almost all available formats in
+use today.
+
+o   A r/w parser for Cistron-format "users" files, commonly used to
+store user authentication information. 
+
+o   A parser for RADIUS accounting "detail" files. This is another
+standard format for RADIUS servers to log accounting data.
+
+RADIUSlib is, to my knowledge, the most featureful RADIUS
+protocol/utility library available to Ruby users (though not the
+first; someone else beat me to that by a month or so ;), and also
+soundly trounces similar offerings for the other high-level scripting
+languages. Its notable features include:
+
+o   Full VSA support, even those quirky USR VSAs.
+o   Authentication classes support both PAP and CHAP methods.
+o   Encodes and decodes filters in the Ascend binary filter format
+    ("abinary").
+o   Idiomatic, Ruby-ish access. I tried to implement lots of useful
+    iterators, and most classes that represent indexable data can
+    be accessed with the familiar Hash-like "[]" and "[]=" methods.
+o   "Request" classes include client-side networking.
+
+----------------------------
+
+Installation
+
+----------------------------
+
+$ ruby install.rb config
+$ ruby install.rb setup
+# ruby install.rb install
+
+Unfortunately, install.rb doesn't come with an `uninstall'
+target. This should do the trick though, modified for your
+environment: 
+
+# rm -r /usr/local/lib/ruby/site_ruby/1.6/radius
+
+
+There are no prerequisites apart from Ruby itself.
+
+I doubt that RADIUSlib works on non-UNIX systems, and I don't have any
+non-UNIX systems to port it to. Volunteers welcome.
+
+----------------------------
+
+Contact (bugs, questions, etc.)
+
+----------------------------
+
+There is no mailing list. Just send mail to airboss@nodewarrior.org if
+you have questions or bug reports; I don't bite. Well, not usually.
+
+
+----------------------------
+
+Use
+
+----------------------------
+
+The best documentation is the rdoc in the source. A pre-processed HTML
+version is included with the source in the doc/ directory. 
+
+Nevertheless, I'll go over some simple examples of how to use each
+class here. Take a look at the 'radtest.rb' program in the sample/
+subdirectory for more use examples. 
+
+-=
+RADIUS::Dictionary
+-=
+
+This class is used by almost all of the other classes in this
+library. Dictionaries are used by RADIUS clients and servers to map
+between human-readable attribute-names and the numbers that appear on
+the wire. Sort of a non-distributed naming system...
+
+You can use the dictionaries included with this library (in the
+raddb/ subdirectory), or the set that came with your RADIUS server.
+
+A RADIUS dictionary is instantiated like this:
+
+require "radius/dictionary"
+dict = RADIUS::Dictionary.new("/path/to/my/dict")
+
+Make sure that all other dictionaries pulled in by your main
+dictionary via $INCLUDE directives live in either your current
+directory, or the same directory as your main dictionary.
+
+After the object is initialized, it can then be accessed as if it were
+a hash. The structures returned are documented in
+radius/radiusutil.rb. I would recommend reading the rdoc if you're
+going to be using this class extensively.
+
+-=
+RADIUS::AuthPacket, RADIUS::AcctPacket
+-=
+
+You shouldn't need to use these classes in most cases; if you're just
+sending authentication or accounting requests, the higher-level
+RADIUS::AuthRequest and RADIUS::AcctRequest class are easier to
+use. The packet-level classes are still pretty friendly -- you never
+have to deal with binary data -- but they won't do convenient things
+for you like auto-encrypting passwords and doing the networking
+for you.
+
+A RADIUS authentication packet is instantiated like this:
+
+require "radius/packet"
+packet = RADIUS::AuthPacket.new(dict_obj, code, "secret", binary_packet)
+
+dict_obj can be either an existing RADIUS::Dictionary object or the
+path to an actual dictionary. 'code' is the type of packet we're
+sending; the codes can be found in your RFCs, or at the top of
+radius/packet.rb. The last argument is optional, and is used when you
+have an existing RADIUS packet that you want to initialize as a
+RADIUS::Packet object -- for example, when you've received a response
+from a remote client/server off the wire.
+
+IMPORTANT: If you're initializing an ACCESS_ACCEPT or ACCESS_REJECT
+packet, it's vital that you call the #response_to method with an
+argument of the request you're responding to. RADIUS needs access to
+the identifier and request authenticator from that request in order to
+generate the appropriate MD5 hash for the response authenticator. See
+the rdoc.
+
+You may find it more intuitive to use these "helper" constructors:
+
+RADIUS::AuthPacket.access_request(dict_obj, "secret", binary_request_packet)
+RADIUS::AuthPacket.access_accept(dict_obj, "secret", binary_accept_packet, binary_request_packet)
+RADIUS::AuthPacket.access_reject(dict_obj, "secret", binary_reject_packetm, binary_request_packet)
+
+This prevents you from having to know the packet type codes, and in
+the last two, will call #response_to for you if the original request
+packet is supplied as the last argument.
+
+After that, you can add attributes to your packet:
+
+packet['User-Name'] = 'radiustest'
+packet[7] = "PPP"
+packet['Cisco-Pre-Input-Octets'] = 9487
+packet['Ascend-Data-Filter'] = 'ip in drop dstip 127.0.0.1/32'
+
+packet['Framed-Protocol']  # ["PPP"]
+
+Three things to note. One, you can refer to dictionary attributes by
+name or by number, with the exception of VSAs, which you should only
+refer to by name. Two, VSAs are added and accessed just like normal
+attributes -- all of the special handling occurs below the
+surface. Three, because of the possibility of having more than one
+instance of an attribute in a given packet, values are returned in an
+array even if there's only one value to access.
+
+RADIUS::AcctPacket doesn't behave appreciably different from
+AuthPacket. Just read the rdoc.
+
+-=
+RADIUS::AuthRequest, RADIUS::AcctRequest
+-=
+
+These classes encapsulate an entire authentication or accounting
+transaction -- building the request, sending it to a server, parsing
+and verifying the response and giving access to it. Ideally, a RADIUS
+authentication request should be as simple as this:
+
+require "radius/request"
+req = RADIUS::AuthRequest.new("dict/dictionary", "radiusserver", "testing123")
+req['User-Name'] = 'radiustest'
+req['CHAP-Password'] = 'foobar'
+
+if(req.send)
+  if(req.success?)
+    req.each { |a, v| puts "\t#{a} = #{v}" }
+  else
+    puts "Access denied."
+  end
+else
+  puts "No response received from server."
+end
+
+As you can see, #success? will return true if a positive response was
+received, and false if a negative response was received. #send will
+return false if no response was received (#success? will return nil in
+this case). Before you call #send, any accesses ([]) or assignments
+([]=) that you do to the request will access/assign to the
+request. After #send, they will access/assign to the response.
+
+Again, RADIUS::AcctRequest behaves much like RADIUS::AuthRequest.
+
+-=
+RADIUS::Usersfile
+-=
+
+This class provides simple access to Cistron-format "users" files. If
+you have a RADIUS server installation, this file will probably live in
+/etc/raddb, though a small sample is included with this package in the
+sample/ directory. 
+
+As mentioned above, this class allows you to both read and write
+"users" files. Here is a sample session, in which we access an
+existing users file, make some changes, and save it to disk.
+
+require "radius/usersfile"
+# Pre-initialize a dictionary.
+$dict = RADIUS::Dictionary.new("dict/dictionary")
+# Create the usersfile object.
+myusers = RADIUS::Usersfile.new($dict, "/etc/raddb/users")
+# Change testuser1's password.
+myusers['testuser1']['Password'] = 'xyzzy'
+# Change testuser2's idle timeout.
+myusers['testuser2'].delete('Idle-Timeout')
+myusers['testuser2']['Idle-Timeout'] = 900
+# Update the file on disk and refresh our in-memory data.
+myusers.update
+
+Performance note: An instance of this class will parse the entire file
+when #new is called. This means that you may see a small delay when
+processing large files, as a RADIUS::User object must be created for
+every entry in the file. Access after that point should be quite fast,
+though. 
+
+-=
+RADIUS::Detail
+-=
+
+This class provides read-only access to RADIUS "detail" files. If
+you're using Cistron, you would find these files under
+/var/log/radacct typically. For Livingston, they're usually under
+/usr/adm. It's a very simple class; you should be able to glean
+everything you need to know from the rdoc. Here's a sample use:
+
+# Total the length of every session in the log.
+
+require "radius/detail"
+totaltime = 0
+mylog = RADIUS::Detail.new("/var/log/radacct/nas1/detail")
+mylog.each do |rec|
+  next if(! rec.stop?)    # Only care about Stop records.
+  totaltime += rec['Acct-Session-Time'][0].to_i
+end
+
+Performance note: As this class is RO, I was able to make some
+optimizations for speed -- caching, instantiate-on-access,
+etc. Important, as some RADIUS logs can be quite large. Nevertheless,
+huge logfiles (100's of MB) being parsed on slow machines can slow
+#new down significantly.
+
+-------------------------
+
+Have fun. Send packets. Report bugs.
+
+Dan Debertin
+<airboss@nodewarrior.org>
