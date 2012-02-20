@@ -1,6 +1,7 @@
 require "radius/dictionary"
 require "radius/radiusutil"
-require "md5"
+require "digest/md5"
+require "continuation"
 
 module RADIUS
 
@@ -13,6 +14,9 @@ module RADIUS
   # the packet is changed, context-sensitive information is 
   # re-calculated to reflect the changes.
   module Packet
+    
+    class Retry < StandardError
+    end
 
     # Packet type codes. Note that ACCESS_CHALLENGE, STAT_SRV,
     # STAT_CLNT and RSVD are unimplemented.
@@ -59,9 +63,9 @@ module RADIUS
       # Return binary TLV tuples from the attribute-list.
       avs = @packet[HEADERLEN...@packet.length]
       while(! avs.empty?)
-	len = avs[1]
-	yield avs[0...len]
-	avs.slice!(0...len)
+	      len = avs[1].ord
+	      yield avs[0...len]
+	      avs.slice!(0...len)
       end
     end
 
@@ -71,17 +75,19 @@ module RADIUS
       avs = @packet[HEADERLEN...@packet.length]
       loc = HEADERLEN
       while(! avs.empty?)
-	len = avs[1]
-	yield loc, avs[0...len]
-	loc += len
-	avs.slice!(0...len)
+	      len = avs[1].ord
+	      yield loc, avs[0...len]
+	      loc += len
+	      avs.slice!(0...len)
       end
     end
 
     # Count the number of times an attrib appears in the packet.
     def count(attr)
       tot = 0
-      each_tlv { |a| tot += 1 if(a[0] == attr) }
+      each_tlv do |a| 
+        tot += 1 if(a[0].ord == attr)
+      end
       tot
     end
 
@@ -90,7 +96,7 @@ module RADIUS
       # and V == val.
       results = []
       each_tlv do |a|
-	results << [ a[0], a[2...a[1]] ] if(a[0] == attr && a[2...a[1]] == val)
+	      results << [ a[0].ord, a[2...a[1].ord] ] if(a[0].ord == attr && a[2...a[1].ord] == val)
       end
 
       results
@@ -100,7 +106,7 @@ module RADIUS
       # Returns an array of all TLV tuples where T == attr.
       results = []
       each_tlv do |a|
-	results << [ a[0], a[2...a[1]] ] if(a[0] == attr)
+	      results << [ a[0].ord, a[2...a[1].ord] ] if(a[0].ord == attr)
       end
 
       results
@@ -110,7 +116,7 @@ module RADIUS
       # Adds a pair to the packet.
       # Check ATTRTAB in case this attr has limits on how many times it
       # can appear (if at all) in this packet.
-      if((ATTRTAB[attr] && ATTRTAB[attr][@packet[0]].call(count(attr) + 1)) ||
+      if((ATTRTAB[attr] && ATTRTAB[attr][@packet[0].ord].call(count(attr) + 1)) ||
 	 ! ATTRTAB[attr])
 	@packet += [attr << 8 | val.length + 2].pack("n") + val
       else
@@ -123,14 +129,19 @@ module RADIUS
 
     def pairdel(attr, val)
       # Delete an attribute with a specified value from the packet.
-      each_tlv_with_index do |i, a|
-	if(a[0] == attr && a[2...a[1]] == val)
-	  @packet = @packet[0...i] + @packet[i + a.length...@packet.length]
-	  # We're modifying what each_tlv is iterating over, so we need
-	  # to start over...
-	  retry
-	end
+      begin
+        each_tlv_with_index do |i, a|
+        	if(a[0].ord == attr && a[2...a[1].ord] == val)
+        	  @packet = @packet[0...i] + @packet[i + a.length...@packet.length]
+        	  # We're modifying what each_tlv is iterating over, so we need
+        	  # to start over...
+        	  raise Retry
+        	end
+        end
+      rescue Retry
+        retry
       end
+      
       recalc_packet
 
       @packet
@@ -138,12 +149,17 @@ module RADIUS
 
     def attrdel(attr)
       # Delete all occurrences of an attribute.
-      each_tlv_with_index do |i, a|
-	  if(a[0] == attr)
-	    @packet = @packet[0...i] + @packet[i + a.length...@packet.length]
-	    retry
-	  end
+      begin
+        each_tlv_with_index do |i, a|
+      	  if(a[0].ord == attr)
+      	    @packet = @packet[0...i] + @packet[i + a.length...@packet.length]
+      	    raise Retry
+      	  end
+        end
+      rescue Retry
+        retry
       end
+      
       recalc_packet
 
       @packet
@@ -197,17 +213,20 @@ module RADIUS
       unum = 0
       data = str.unpack("NNNN")
       f, cc1, cc2 = nil
+      d = 3
+      
       0.upto(3) do |u|
-	callcc { |cc1|
-	  f = u
-	  cc2.call if(cc2)
-	  3.downto(0) do |d|
-	    callcc { |cc2|
-	      unum |= data[f] << d * 32
-	      cc1.call if(cc1)
-	    }
-	  end
-	}
+        callcc { |cc1|
+          f = u
+          cc2.call if(cc2)
+          3.times do
+            callcc { |cc2|
+              unum |= data[f] << d * 32
+              d -= 1
+              cc1.call if cc1
+            }
+          end
+      }
       end
 
       return unum
@@ -240,6 +259,7 @@ module RADIUS
 	v = val.split(/\./).collect { |o| o.to_i }
 	# I almost hate to do this ;)
 	f, cc1, cc2 = nil
+	# FIXME: probably broken because of block variable scope changes in ruby 1.9
 	0.upto(3) do |o|
 	  callcc { |cc1|
 	    f = o
@@ -756,8 +776,8 @@ module RADIUS
     # Run a sanity check on the packet and throw exceptions if
     # illogical values or inconsistencies are found.
     def valid_packet?(data)
-      if(data[0] >= 0x0B)
-	raise RadiusProtocolError, "Unknown or unsupported packet type #{data[0]}"
+      if(data[0].ord >= 0x0B)
+	raise RadiusProtocolError, "Unknown or unsupported packet type #{data[0].ord}"
       end
       if(data[2..3].unpack("n")[0] != data.length)
 	raise RadiusProtocolError, "Packet length field != actual length"
@@ -768,37 +788,37 @@ module RADIUS
       avs = data[20...data.length]
       acount = []
       while(! avs.empty?)
-	acount[avs[0]] ||= 0
-	acount[avs[0]] += 1
-	a, v = avs[0], avs[2...avs[1]]
+	acount[avs[0].ord] ||= 0
+	acount[avs[0].ord] += 1
+	a, v = avs[0].ord, avs[2...avs[1].ord]
 	a, v = *int2dict(*unpackval(a, v))
 	if(! @@dict[a.attrname])
 	  raise RadiusProtocolError, "Unknown attribute #{a.attrname}"
 	end
-  if(@@dict[a.attrname].datatype == 'integer')
-   if(@@dict[a.attrname].values && 
-      (! v.is_a?(Struct::RValues) || ! @@dict[a.attrname].values[v.valnum]))
-     # raise RadiusProtocolError, "Attribute #{a.attrname} value unknown: #{v}"
-     logger.warn "RadiusProtocolWarning: Attribute #{a.attrname} value unknown: #{v}"
-   end
-  end
-	if(avs[1] != avs[0...avs[1]].size)
-    # raise RadiusProtocolError, "Attribute #{a.attrname} length field != actual length: #{avs[0]}"
-    logger.warn "RadiusProtocolWarning: Attribute #{a.attrname} length field != actual length: #{avs[0]}"
-	end
-	if(avs[0] == 26 && avs[2..5].unpack("N")[0] != 429)
+        if(@@dict[a.attrname].datatype == 'integer')
+          if(@@dict[a.attrname].values && 
+             (! v.is_a?(Struct::RValues) || ! @@dict[a.attrname].values[v.valnum]))
+            # raise RadiusProtocolError, "Attribute #{a.attrname} value unknown: #{v}"
+            logger.warn "RadiusProtocolWarning: Attribute #{a.attrname} value unknown: #{v}"
+          end
+        end
+        if(avs[1].ord != avs[0...avs[1].ord].size)
+          # raise RadiusProtocolError, "Attribute #{a.attrname} length field != actual length: #{avs[0].ord}"
+          logger.warn "RadiusProtocolWarning: Attribute #{a.attrname} length field != actual length: #{avs[0].ord}"
+        end
+        if(avs[0].ord == 26 && avs[2..5].unpack("N")[0] != 429)
 	  # VSA length field, for vendors that have it.
-	  if(avs[7] != avs[1] - 6)
-      # raise RadiusProtocolError, "VSA #{a.attrname} length field != actual VSA length: #{avs[0...avs[1]]}"
-      logger.warn "RadiusProtocolWarning: VSA #{a.attrname} length field != actual VSA length: #{avs[0...avs[1]]}"
+	  if(avs[7].ord != avs[1].ord - 6)
+            # raise RadiusProtocolError, "VSA #{a.attrname} length field != actual VSA length: #{avs[0...avs[1].ord]}"
+            logger.warn "RadiusProtocolWarning: VSA #{a.attrname} length field != actual VSA length: #{avs[0...avs[1].ord]}"
 	  end
-	end
-  if(ATTRTAB[avs[0]] && ! ATTRTAB[avs[0]][data[0]].call(acount[avs[0]]))
-   # raise RadiusProtocolError, "Attribute #{a.attrname} should not appear #{acount[avs[0]]} times in this packet"
-   logger.warn "RadiusProtocolWarning: Attribute #{a.attrname} should not appear #{acount[avs[0]]} times in this packet"
-  end
-	avs.slice!(0...avs[1])
-      end
+        end
+        if(ATTRTAB[avs[0].ord] && ! ATTRTAB[avs[0].ord][data[0].ord].call(acount[avs[0].ord]))
+          # raise RadiusProtocolError, "Attribute #{a.attrname} should not appear #{acount[avs[0]]} times in this packet"
+          logger.warn "RadiusProtocolWarning: Attribute #{a.attrname} should not appear #{acount[avs[0].ord]} times in this packet"
+        end
+	avs.slice!(0...avs[1].ord)
+      end #while
       true
     end
 
@@ -806,12 +826,12 @@ module RADIUS
 
     # Return the packet's code byte.
     def code
-      @packet.dup[0]
+      @packet.dup[0].ord
     end
 
     # Return the packet's identifier byte.
     def ident
-      @packet.dup[1]
+      @packet.dup[1].ord
     end
 
     # Return the packet's request/response authenticator as a
@@ -823,7 +843,7 @@ module RADIUS
     # Return the packet's request/response authenticator as a
     # binary String.
     def authen_str
-      @packet.dup[4..19]
+      @packet.dup[4..19].to_s
     end
 
     # Return the "length" field from the packet. This is not a 
@@ -921,18 +941,16 @@ module RADIUS
     # Iterate through AV-pairs by number.
     def eachbynum
       each_tlv do |t|
-	a, v = *int2dict(*unpackval(t[0], t[2...t[1]]))
-	yield a.attrnum,
-	  (v.is_a?(Struct::RValues) ? v.valnum : v)
+      	a, v = *int2dict(*unpackval(t[0].ord, t[2...t[1].ord]))
+      	yield a.attrnum, (v.is_a?(Struct::RValues) ? v.valnum : v)
       end
     end
 
     # Iterate through AV-pairs by name.
     def eachbyname
       each_tlv do |t|
-	a, v = *int2dict(*unpackval(t[0], t[2...t[1]]))
-	yield a.attrname,
-	  (v.is_a?(Struct::RValues) ? v.valname : v)
+	      a, v = *int2dict(*unpackval(t[0].ord, t[2...t[1].ord]))
+	      yield a.attrname, (v.is_a?(Struct::RValues) ? v.valname : v)
       end
     end
 
@@ -1041,7 +1059,7 @@ module RADIUS
 	  if(! @req_authen)
 	    return false
 	  end
-	  @packet[4..19] = MD5.digest(@packet[0..3] +
+	  @packet[4..19] = Digest::MD5.digest(@packet[0..3] +
 				      pack16(@req_authen) +
 				      @packet[20...@packet.size] +
 				      @secret)
@@ -1054,7 +1072,6 @@ module RADIUS
       else
 	raise RadiusProtocolError, "Wrong packet type for this class, or unsupported packet type"
       end
-
       recalc_packet
     end
 
@@ -1074,8 +1091,8 @@ module RADIUS
 	@req_authen = ra
       when String
 	if(valid_packet?(ra))
-	  if(ra[0] != ACCESS_REQUEST)
-	    raise ArgumentError, "Not an ACCESS_REQUEST packet"
+	  if(ra[0].ord != ACCESS_REQUEST)
+	    raise ArgumentError, "Not an ACCESS_REQUEST packet: String"
 	  end
 	  @req_authen = unpack16(ra[4..19])
 	  @packet[1] = ra[1]
@@ -1086,10 +1103,10 @@ module RADIUS
 	end
       when RADIUS::Packet
 	if(ra.code != ACCESS_REQUEST)
-	  raise ArgumentError, "Not an ACCESS_REQUEST packet"
+	  raise ArgumentError, "Not an ACCESS_REQUEST packet: RADIUS::Packet"
 	end
 	@req_authen = ra.authen
-	@packet[1] = ra.ident
+	@packet[1] = ra.ident.chr
       end
 
       recalc_packet
@@ -1104,7 +1121,7 @@ module RADIUS
 	  if(! data.is_a?(String) && ! data.is_a?(RADIUS::AuthPacket))
 	    raise ArgumentError, "Invalid input data argument type \"#{data.class}\""
 	  end
-	  if((data.is_a?(String) && data[0] != RADIUS::Packet::ACCESS_REQUEST) ||
+	  if((data.is_a?(String) && data[0].ord != RADIUS::Packet::ACCESS_REQUEST) ||
 	     (data.is_a?(RADIUS::AuthPacket) && data.code != RADIUS::Packet::ACCESS_REQUEST))
 	    raise ArgumentError, "Not an ACCESS_REQUEST packet"
 	  end
@@ -1121,7 +1138,7 @@ module RADIUS
 	  if(! data.is_a?(String) && ! data.is_a?(RADIUS::AuthPacket))
 	    raise ArgumentError, "Invalid input data argument type \"#{data.class}\""
 	  end
-	  if((data.is_a?(String) && data[0] != RADIUS::Packet::ACCESS_ACCEPT) ||
+	  if((data.is_a?(String) && data[0].ord != RADIUS::Packet::ACCESS_ACCEPT) ||
 	     (data.is_a?(RADIUS::AuthPacket) && data.code != RADIUS::Packet::ACCESS_ACCEPT))
 	    raise ArgumentError, "Not an ACCESS_ACCEPT packet"
 	  end
@@ -1146,7 +1163,7 @@ module RADIUS
 	  if(! data.is_a?(String) && ! data.is_a?(RADIUS::AuthPacket))
 	    raise ArgumentError, "Invalid input data argument type \"#{data.class}\""
 	  end
-	  if((data.is_a?(String) && data[0] != RADIUS::Packet::ACCESS_REJECT) ||
+	  if((data.is_a?(String) && data[0].ord != RADIUS::Packet::ACCESS_REJECT) ||
 	     (data.is_a?(RADIUS::AuthPacket) && data.code != RADIUS::Packet::ACCESS_REJECT))
 	    raise ArgumentError, "Not an ACCESS_REJECT packet"
 	  end
@@ -1205,7 +1222,7 @@ module RADIUS
 	# Calculate the request authenticator. Unlike auth, this must
 	# be recalc'd every time the packet changes
 	def calc_authen
-	  @packet[4..19] = MD5.digest(@packet[0..3] +
+	  @packet[4..19] = Digest::MD5.digest(@packet[0..3] +
 				      "\0" * 16 +
 				      @packet[20...@packet.length] +
 				      @secret)
@@ -1223,7 +1240,7 @@ module RADIUS
 	  if(! @req_authen)
 	    return false
 	  end
-	  @packet[4..19] = MD5.digest(@packet[0..3] +
+	  @packet[4..19] = Digest::MD5.digest(@packet[0..3] +
 				      pack16(@req_authen) +
 				      @packet[20...@packet.length] +
 				      @secret)
@@ -1270,7 +1287,7 @@ module RADIUS
 	  raise ArgumentError, "Not an ACCT_REQUEST packet"
 	end
 	@req_authen = ra.authen
-	@packet[1] = ra.ident
+	@packet[1] = ra.ident.chr
       end
 
       recalc_packet
@@ -1285,7 +1302,7 @@ module RADIUS
 	  if(! data.is_a?(String) && ! data.is_a?(RADIUS::AcctPacket))
 	    raise ArgumentError, "Invalid input data argument type \"#{data.class}\""
 	  end
-	  if((data.is_a?(String) && data[0] != RADIUS::Packet::ACCT_REQUEST) ||
+	  if((data.is_a?(String) && data[0].ord != RADIUS::Packet::ACCT_REQUEST) ||
 	     (data.is_a?(RADIUS::AcctPacket) && data.code != RADIUS::Packet::ACCT_REQUEST))
 	    raise ArgumentError, "Not an ACCT_REQUEST packet"
 	  end
@@ -1302,7 +1319,7 @@ module RADIUS
 	  if(! data.is_a?(String) && ! data.is_a?(RADIUS::AcctPacket))
 	    raise ArgumentError, "Invalid input data argument type \"#{data.class}\""
 	  end
-	  if((data.is_a?(String) && data[0] != RADIUS::Packet::ACCT_RESP) ||
+	  if((data.is_a?(String) && data[0].ord != RADIUS::Packet::ACCT_RESP) ||
 	     (data.is_a?(RADIUS::AcctPacket) && data.code != RADIUS::Packet::ACCT_RESP))
 	    raise ArgumentError, "Not an ACCT_RESP packet"
 	  end

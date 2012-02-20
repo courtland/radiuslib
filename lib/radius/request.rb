@@ -1,6 +1,6 @@
 require "radius/packet"
 require "radius/user"
-require "md5"
+require "digest/md5"
 require "socket"
 
 module RADIUS
@@ -65,27 +65,28 @@ module RADIUS
 
     def add(i, v)
       if(! @@dict[i])
-	raise RadiusProtocolError, "Unknown attribute #{i}"
+	      raise RadiusProtocolError, "Unknown attribute #{i}"
       end
       attrnum = @@dict[i].attrnum
       if(attrnum == 2)
-	@password = v
-	self.mode = 'pap'
+      	@password = v
+      	self.mode = 'pap'
       elsif(attrnum == 3 || attrnum == 60)
-	@password = v if(attrnum == 3)
-	self.mode = 'chap'
+      	@password = v if(attrnum == 3)
+      	self.mode = 'chap'
       end
+
       unless(attrnum == 2 || attrnum == 3 || attrnum == 60)
-	@req_packet[i] = v
+	      @req_packet[i] = v
       else 
-	# Recalc the password if we receive the challenge after it.
-	if(attrnum == 60 && @req_packet['CHAP-Password'])
-	  @req_packet.delete('CHAP-Password')
-	  @req_packet[i] = v
-	  @req_packet['CHAP-Password'] = @pwcalc.call(@password)
-	else
-	  @req_packet[i] = @pwcalc.call(v)
-	end
+      	# Recalc the password if we receive the challenge after it.
+      	if(attrnum == 60 && @req_packet['CHAP-Password'])
+      	  @req_packet.delete('CHAP-Password')
+      	  @req_packet[i] = v
+      	  @req_packet['CHAP-Password'] = @pwcalc.call(@password)
+      	else
+      	  @req_packet[i] = @pwcalc.call(v)
+      	end
       end
     end
 
@@ -106,7 +107,6 @@ module RADIUS
       d = []
       4.times { |j| d.unshift((@req_packet.authen >> j * 32) & 0xffffffff) }
       curauth = d.pack("NNNN")
-
       presult = ''
       i=0
       # step through password 16 bytes at a time
@@ -115,13 +115,13 @@ module RADIUS
         # the authenticator will be come the prev password segment as we loop through the segments
 
         # if ruby supported xor on strings we could do:
-        # curauth = p[i,i+15] ^ MD5.digest(@secret + curauth)
+        # curauth = p[i,i+15] ^ Digest::MD5.digest(@secret + curauth)
 
         # but instead we have to do the following
         # get the digest
-        dig = MD5.digest(@secret + curauth)
+        dig = Digest::MD5.digest(@secret + curauth)
         # step through each byte of the segment and xor with the digest
-        0.upto(15) { |j| curauth[j] = p[i+j] ^ dig[j] }
+        0.upto(15) { |j| curauth[j] = [(p[i+j].ord ^ dig[j].ord)].pack("C") }
 
         # concat the result onto the encrypted password result
         presult += curauth
@@ -140,12 +140,12 @@ module RADIUS
       end
       # I'm content to use random CHAP IDs ... any reason not to?
       id = [rand(255)].pack("C")
-      id + MD5.digest(id + p + chall)
+      id + Digest::MD5.digest(id + p + chall)
     end
 
     def vrfy_response_authen
-      dig = MD5.digest(@resp_packet.to_s[0..3] + @req_packet.authen_str + 
-		       @resp_packet.to_s[20...@resp_packet.size] + @secret)
+      dig = Digest::MD5.digest(@resp_packet.to_s[0..3] + @req_packet.authen_str +
+	      @resp_packet.to_s[20...@resp_packet.size] + @secret)
       dig == @resp_packet.authen_str
     end
 
@@ -257,10 +257,10 @@ module RADIUS
       }
       r = sock.recvfrom(RADIUS::Packet::PACKET_MAX)
       @serverinfo = r[1]
-      @resp_packet = RADIUS::AuthPacket.new(@@dict, r[0][0], @secret, r[0])
+      @resp_packet = RADIUS::AuthPacket.new(@@dict, r[0][0].ord, @secret, r[0])
       @resp_packet.response_to(@req_packet)
       if(! vrfy_response_authen)
-	raise RadiusProtocolError, "Received invalid response authenticator from server"
+	raise RadiusProtocolError, "Received invalid response authenticator from server 2"
       end
       @cur = @resp_packet
       sock.close
@@ -337,8 +337,8 @@ module RADIUS
     end
 
     def vrfy_response_authen
-      dig = MD5.digest(@resp_packet.to_s[0..3] + @req_packet.authen_str +
-		       @resp_packet.to_s[20...@resp_packet.size] + @secret)
+      dig = Digest::MD5.digest(@resp_packet.to_s[0..3] + @req_packet.authen_str +
+	       @resp_packet.to_s[20...@resp_packet.size] + @secret)
       dig == @resp_packet.authen_str
     end
 
@@ -434,7 +434,7 @@ module RADIUS
       @serverinfo = r[1]
       @resp_packet = RADIUS::AcctPacket.acct_resp(@@dict, @secret, r[0], @req_packet)
       if(! vrfy_response_authen)
-	raise RadiusProtocolError, "Received invalid response authenticator from server"
+	raise RadiusProtocolError, "Received invalid response authenticator from server 3"
       end
       @cur = @resp_packet
       sock.close
