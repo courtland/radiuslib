@@ -53,10 +53,10 @@ module RADIUS
 
     private
 
+    @@logger = nil
     # setup a logger, trying to use the rails logger, else a new one to STDOUT
-    @@logger = defined?(RAILS_DEFAULT_LOGGER) ? RAILS_DEFAULT_LOGGER : Logger.new(STDOUT)
     def logger
-      @@logger
+      @@logger ||= Rails.logger || Logger.new(STDOUT)
     end
     
     def each_tlv
