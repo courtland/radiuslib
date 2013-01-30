@@ -273,6 +273,15 @@ module RADIUS
     
     # The authentication mode
     attr_reader :auth_mode
+    
+    # The password
+    attr_reader :password
+
+    # Request packet
+    attr_reader :req_packet
+
+    # Response packet
+    attr_reader :resp_packet
 
     # <em>true</em> if the response packet was an ACCESS_ACCEPT packet.
     # <em>false</em> if the response packet was an ACCESS_REJECT packet.

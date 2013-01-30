@@ -123,7 +123,6 @@ module RADIUS
 	raise RadiusProtocolError, "Attribute #{attr} should not appear #{count(attr) + 1} time(s) in this packet"
       end
       recalc_packet
-
       @packet
     end
 
@@ -692,7 +691,7 @@ module RADIUS
 	if(val)
 	  case attr.datatype
 	  when 'string'
-	    # Do nothing.
+	    val.force_encoding('binary')
 	  when 'integer'
 	    if(attr.values && attr.values[val])
 	      val = attr.values[val].valnum
