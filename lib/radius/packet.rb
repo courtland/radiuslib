@@ -1,7 +1,6 @@
 require "radius/dictionary"
 require "radius/radiusutil"
 require "digest/md5"
-require "continuation"
 
 module RADIUS
 
