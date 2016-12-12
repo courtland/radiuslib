@@ -209,26 +209,7 @@ module RADIUS
 
     def unpack16(str)
       # Unpack a 16-byte string into a Bignum.
-      unum = 0
-      data = str.unpack("NNNN")
-      f, cc1, cc2 = nil
-      d = 3
-      
-      0.upto(3) do |u|
-        callcc { |cc1|
-          f = u
-          cc2.call if(cc2)
-          3.times do
-            callcc { |cc2|
-              unum |= data[f] << d * 32
-              d -= 1
-              cc1.call if cc1
-            }
-          end
-      }
-      end
-
-      return unum
+      str.bytes.inject {|a, b| (a << 8) + b }
     end
 
     # Convert an IP address represented as 4 1-byte chars
@@ -253,30 +234,7 @@ module RADIUS
 
     # Convert a dotted-quad or hex IP address to a 32-bit number.
     def ipaddr_str2num(val)
-      if(val =~ /^(?:(?:[01]?\d\d?|2[0-4]\d|25[0-5])\.?){4}$/)
-	n = 0
-	v = val.split(/\./).collect { |o| o.to_i }
-	# I almost hate to do this ;)
-	f, cc1, cc2 = nil
-	# FIXME: probably broken because of block variable scope changes in ruby 1.9
-	0.upto(3) do |o|
-	  callcc { |cc1|
-	    f = o
-	    cc2.call if(cc2)
-	    3.downto(0) do |i|
-	      callcc { |cc2|
-		n |= v[f] << i * 8
-		cc1.call if(cc1)
-	      }
-	    end
-	  }
-	end
-	n
-      elsif(val =~ /^0x[0-9A-Fa-f]{8}$/)
-	[sprintf("%d", val).to_i]
-      else
-	raise RuntimeError, "IP address format violation: #{val}"
-      end
+      unpack16(ipaddr_str2bin(val))
     end
 
     # Convert a 32-bit number to a dotted-quad IP address.
