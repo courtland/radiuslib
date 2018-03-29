@@ -4,7 +4,7 @@
 # MultiHash is, oddly enough, actually an Array mixin, but the
 # resulting behavior is more Hash-like. When mixed into an Array,
 # elements added to the MultiHash can be accessed via either a
-# String or Fixnum index. Either index will access the same element,
+# String or Integer index. Either index will access the same element,
 # not a copy of it. Note the (probably surprising) metaphor skew
 # for the setter method -- [] requires two args between brackets,
 # along with the value.
@@ -13,7 +13,8 @@ module MultiHash
   # Access MultiHash elements by name or number.
   def [](idx)
     case idx
-    when Integer
+    # Ruby 2.4+ unifies Fixnum & Bignum into Integer.
+    when 0.class
       (reverse.rassoc(idx) || [])[2]
     when String
       (reverse.assoc(idx) || [])[2]
@@ -87,7 +88,8 @@ module InvHash
     case idx
     when String
       replace(invert) if(keys[0].kind_of?(Integer))
-    when Fixnum
+    # Ruby 2.4+ unifies Fixnum & Bignum into Integer.
+    when 0.class
       replace(invert) if(keys[0].kind_of?(String))
     else
       nil
@@ -99,8 +101,9 @@ module InvHash
   # Perform the same auto-inversion as in <em>[]</em>, but set
   # a value.
   def []=(idx, val)
-    if(! (idx.kind_of?(String) && val.kind_of?(Fixnum)) &&
-       ! (idx.kind_of?(Fixnum) && val.kind_of?(String)))
+    # Ruby 2.4+ unifies Fixnum & Bignum into Integer.
+    if(! (idx.kind_of?(String) && val.kind_of?(0.class)) &&
+       ! (idx.kind_of?(0.class) && val.kind_of?(String)))
       raise TypeError
     end
     replace(invert) if(keys[0].class != idx.class)
